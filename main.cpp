@@ -9,45 +9,114 @@
 #include <algorithm>
 
 int RGB = 0;
+int color_pair_counter = 1;
+
+// Массив, сопоставляющий символ тайла и его цвета.
+// тайл | foreground color | background color
+char tilesColor[][3] = {
+    {'-', 11, 11},
+    {'u', 5, 5},
+};
+
+// Количество различных тайлов в массиве.
+int tilesTypes = 2;
+
+// Возвращает:
+// номер цвета - если указанный тайл есть в массиве
+// -1 - если указанный тайл не найден
+int getFColor(char c) {
+    for (int i = 0; i < tilesTypes; i++) {
+        if (tilesColor[i][0] == c) {
+            return tilesColor[i][1];
+        }
+    }
+    return -1;
+}
+int getBColor(char c) {
+    for (int i = 0; i < tilesTypes; i++) {
+        if (tilesColor[i][0] == c) {
+            return tilesColor[i][2];
+        }
+    }
+    return -1;
+}
+
+// Функция для получения цветовой пары на основании двух цветов.
+// Если она присутствует в списке цветовых пар, то возвращается ее номер.
+// Если отсутствует, то создаётся новая и возвращается её порядковый номер.
+int getPair(int f, int b) {
+    short int i_f, i_b;
+    for (int i = 1; i < color_pair_counter; i++) {
+        pair_content(i, &i_f, &i_b);
+        if (i_f == f && i_b == b) {
+            return i;
+        }
+    }
+    init_pair(color_pair_counter, f, b);
+    return color_pair_counter++;
+}
 
 class Entity {
 private:
 public:
     char a; // аватар
     char* title; // название сущности
-    Entity(char _a) {
+    int color; // 0-256 по VGA
+
+    Entity() {
+        a = '?';
+        title = nullptr;
+        color = 1;
+    }
+    Entity(char _a, const char* _t, int _c) {
         a = _a;
+        title = strdup(_t);
+        color = _c;
     }
 };
 
-class Animal : public Entity {
+class Actor : public Entity {
 private:
 public:
-    int hp, maxhp; // здоровье
+    Actor(char _a, const char* _t, int _c) : Entity(_a, _t, _c) {
+    }
+};
 
-    Animal(char _a) : Entity(_a) {
+class Statics : public Entity {
+private:
+public:
+    Statics(char _a, const char* _t, int _c) : Entity(_a, _t, _c) {
+    }
+};
+
+class Animal : public Actor {
+private:
+public:
+    int hp, defhp; // здоровье
+    int sight;
+    Animal(char _a, const char* _t, int _c) : Actor(_a, _t, _c) {
     }
 };
 
 class Mouse : public Animal {
 private:
 public:
-    Mouse() : Animal('o') {
-    hp = 100;
-    maxhp = 100;
+    Mouse() : Animal('q', "Mouse", 4) {
+        hp = 100;
+        defhp = 100;
     }
 };
 
-class Grass : public Entity {
+class Grass : public Statics {
 private:
 public:
-    Grass() : Entity('w') {
+    Grass() : Statics('w', "Grass", 2) {
     }
 };
 
-class Player : public Entity {
+class Player : public Actor {
 private:
-    Player() : Entity('@') {
+    Player() : Actor('@', "Player", 1) {
     }
     static Player * player;
 public:
@@ -65,7 +134,9 @@ class Map {
 private:
 public:
     int width, height, playerX, playerY;
-    std::vector<Entity*> ** grid;
+    char ** tiles;
+    Statics*** statics;
+    Actor*** actors;
 
     Map(int _w, int _h) {
         width = _w;
@@ -73,49 +144,102 @@ public:
         playerX = -1;
         playerY = -1;
 
-        grid = (std::vector<Entity*>**)malloc(sizeof(std::vector<Entity*>*)*height);
+        // Создание трёх слоёв карты: тайлы, статика, актёры
+        tiles = (char**)malloc(sizeof(char*)*height);
+        statics = (Statics***)malloc(sizeof(Statics**)*height);
+        actors = (Actor***)malloc(sizeof(Actor**)*height);
         for (int i = 0; i < height; i++) {
-            grid[i] = (std::vector<Entity*>*)malloc(sizeof(std::vector<Entity*>)*width);
+            tiles[i] = (char*)malloc(sizeof(char)*width);
+            statics[i] = (Statics**)malloc(sizeof(Statics*)*width);
+            actors[i] = (Actor**)malloc(sizeof(Actor*)*width);
         }
     }
 
     void dullFill() {
         for (int i = 0; i < height; i++) {
             for (int j = 0; j < width; j++) {
-                    if (rand()%10<2) {
-                        if (rand()%2) grid[i][j].push_back(new Mouse());
-                        else grid[i][j].push_back(new Grass());
-                    }
+                actors[i][j] = nullptr;
+                statics[i][j] = nullptr;
+                tiles[i][j] = '-';
+                if (rand()%10<2) {
+                    if (rand()%2) actors[i][j] = new Mouse();
+                    else statics[i][j] = new Grass();
+                }
+                else actors[i][j] = nullptr;
             }
         }
     }
 
     ~Map() {
         for (int i = 0; i < height; i++) {
-                free(grid[i]);
+            free(tiles[i]);
+            for (int j = 0; j < width; j++) {
+                free(statics[i][j]);
+                free(actors[i][j]);
+            }
+            free(statics[i]);
+            free(actors[i]);
         }
+        free(tiles);
+        free(statics);
+        free(actors);
     }
 
+    // Заглушка для того, чтобы при дебаге смотреть на веселые движущиеся символы :-)
+    int AI(int viewX, int viewY, int viewWidth, int viewHeight) {
+        for (int i = viewY; i < viewY + viewHeight && i < height; i++) {
+            for (int j = viewX; j < viewX + viewWidth && j < width; j++) {
+                if (actors[i][j] && !(i == playerY && j == playerX)) {
+                    if (rand()%10 > 8) {
+                        if (i > 0 && !actors[i-1][j]) {
+                            actors[i-1][j] = actors[i][j];
+                            actors[i][j] = nullptr;
+                        }
+                        else if (j < width-1 && !actors[i][j+1]) {
+                            actors[i][j+1] = actors[i][j];
+                            actors[i][j] = nullptr;
+                        }
+                        else if (i < height-1 && !actors[i+1][j]) {
+                            actors[i+1][j] = actors[i][j];
+                            actors[i][j] = nullptr;
+                        }
+                        else if (j > 0 && !actors[i][j-1]) {
+                            actors[i][j-1] = actors[i][j];
+                            actors[i][j] = nullptr;
+                        }
+                    }
+                }
+            }
+        }
+        return 0;
+    }
+
+    // Обработка движения по горизонтали. Возвращает:
+    // 0 - если игрок был успешно передвинут
+    // 1 - если движение в указанную сторону было невозможно
     int moveX(int d) {
         if (playerX >= 0) { // если игрок поставлен на карту
             if ((d > 0 && playerX + d < width ) || (d < 0 && playerX + d >= 0)) {
-                grid[playerY][playerX].erase(std::find(grid[playerY][playerX].begin(), grid[playerY][playerX].end(), Player::getInstance()));
+                actors[playerY][playerX+d] = actors[playerY][playerX];
+                actors[playerY][playerX] = nullptr;
                 playerX += d;
-                grid[playerY][playerX].push_back(Player::getInstance());
-                return 1;
+                return 0;
             }
-            else if (d) return 0;
-            else return 1;
+            else if (d) return 1;
+            else return 0;
         }
-        else return 0;
+        else return 1;
     }
 
+    // Обработка движения по вертикали. Возвращает:
+    // 0 - если игрок был успешно передвинут
+    // 1 - если движение в указанную сторону было невозможно
     int moveY(int d) {
         if (playerY >= 0) { // если игрок поставлен на карту
             if ((d > 0 && playerY + d < height) || (d < 0 && playerY + d >= 0)) {
-                grid[playerY][playerX].erase(std::find(grid[playerY][playerX].begin(), grid[playerY][playerX].end(), Player::getInstance()));
+                actors[playerY+d][playerX] = actors[playerY][playerX];
+                actors[playerY][playerX] = nullptr;
                 playerY += d;
-                grid[playerY][playerX].push_back(Player::getInstance());
                 return 1;
             }
             else if (d) return 0;
@@ -124,10 +248,20 @@ public:
         else return 0;
     }
 
+    // Отрисовка карты
     void render(int viewX, int viewY, int viewWidth, int viewHeight, int mapX, int mapY) {
         int a, b, c;
         int d, e, f;
+        // a - Y-координата карты, с которой начинается отрисовка
+        // b - Y-координата карты, которая является нижней границей отрисовки
+        // c - корректировка Y-оси
 
+        // d - X-координата карты, с которой начинается отрисовка
+        // e - X-координата карты, которая является правой границей отрисовки
+        // f - корректировка X-оси
+
+
+        // Если в высоту окно меньше, чем карта, и её надо обрезать по oY:
         if (viewHeight <= height) {
             a = viewY;
             b = viewHeight+viewY;
@@ -139,6 +273,7 @@ public:
             c = (viewHeight-height)/2;
         }
 
+        // Если в ширину окно меньше, чем карта, и её надо обрезать по oX:
         if (viewWidth <= width) {
             d = viewX;
             e = viewWidth+viewX;
@@ -150,25 +285,71 @@ public:
             f = (viewWidth-width)/2;
         }
 
-
         for (int i = a; i < b; i++) {
             for (int j = d; j < e; j++) {
-                if (grid[i][j].size()) mvaddch(mapY+i+c, mapX+j+f, grid[i][j][grid[i][j].size()-1]->a);
-                else mvaddch(mapY+i+c, mapX+j+f, ' ');
+                int fg, bg, ch;
+                // Цвет переднего плана, цвет фона, буква, которую надо нарисовать
+
+                // Данным блоком команд мы автоматически присваиваем указанным выше переменным значения
+                // со слоя тайла, то есть символ тайла и его цвета. Потом мы пройдёмся по слоям
+                // актёра и статики и, если найдём там какую-то сущность, изменим рисуемый символ и цвет
+                // переднего плана.
+                if (tiles[i][j]) {
+                    ch = tiles[i][j];
+                    fg = getFColor(tiles[i][j]);
+                    bg = getBColor(tiles[i][j]);
+                }
+                else {
+                    ch = 'N';
+                    fg = COLOR_WHITE;
+                    bg = COLOR_RED;
+                }
+
+                // Преимущественно мы обрабатываем слой актёров, т.к. даже если под актёром находится
+                // статика, её будет "не видно", так как в нашей игре слой актёров "лежит" поверх слоя
+                // статики.
+                if (actors[i][j]) {
+                    fg = actors[i][j]->color;
+                    ch = actors[i][j]->a;
+                }
+                else if (statics[i][j]) {
+                    fg=statics[i][j]->color;
+                    ch=statics[i][j]->a;
+                }
+
+                // Поиск цветовой пары (или создание новой) и отрисовка ячейки карты.
+                int k = getPair(fg, bg);
+                attron(COLOR_PAIR(k));
+                mvaddch(mapY+i+c, mapX+j+f, ch);
+                attroff(COLOR_PAIR(k));
             }
         }
     }
 
+    // Устанавливает объект игрока на карту. Возвращает:
+    // 0 - игрок успешно поставлен
+    // 1 - ошибка: на указанной координате находится другой актер
     int putPlayer(int _x, int _y) {
-        grid[_y][_x].push_back(Player::getInstance());
-        playerX = _x;
-        playerY = _y;
+        if (!actors[_y][_x]) {
+            actors[_y][_x] = Player::getInstance();
+            playerX = _x;
+            playerY = _y;
+            return 0;
+        }
+        return 1;
     }
 
+    // Убирает объект игрока с карты. Возвращает:
+    // 0 - игрок успешно убран
+    // 1 - ошибка: на указанной координате нет объекта игрока
     int popPlayer() {
-        grid[playerY][playerX].erase(std::find(grid[playerY][playerX].begin(), grid[playerY][playerX].end(), Player::getInstance()));
-        playerX = -1;
-        playerY = -1;
+        if (playerX >= 0 && playerY >= 0) {
+            actors[playerY][playerX] = nullptr;
+            playerX = -1;
+            playerY = -1;
+            return 0;
+        }
+        return 1;
     }
 };
 
@@ -259,6 +440,7 @@ public:
 
     // Отрисовка карты
     void renderMap() {
+        map->AI(viewX, viewY, width, height);
         map->render(viewX, viewY, width, height, x, y);
     }
 
@@ -330,11 +512,24 @@ void sig_handler(int signum) {
 
 int main() {
     initscr();
+	if (!has_colors())
+	{	endwin();
+		printf("Error: your terminal does not support colors.\n");
+		exit(1);
+	}
+	use_default_colors();
+	start_color();
+
+
     signal(SIGWINCH,sig_handler);
     srand (time(NULL));
     cbreak();
     noecho();
+    timeout(100);  //!!!!!!!!!!!!!!
     keypad(stdscr, TRUE);
+
+
+
     testMap->resize(0,0,COLS,LINES/3*2);
     test->resize(0,LINES/3*2+1,COLS,LINES/3);
 
@@ -343,6 +538,7 @@ int main() {
 
     while (1) {
         char ch = getch();
+        color_pair_counter = 1;
         switch(ch)
         {
             case 'a': {
